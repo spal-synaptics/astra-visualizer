@@ -11,3 +11,8 @@ pip3 install -r requirements.txt
 ```
 python3 -m src.dashboard <board IP>
 ```
+
+#### Run Options
+* `-i/--interval`: Polling interval in milliseconds (default: 500 ms)
+* `-w/--window`: Statistics sliding window length in seconds (default: 10 s)
+* `--port`: Port for running display dashboard webapp (default: 8050)
