@@ -9,6 +9,7 @@ pip3 install -r requirements.txt
 
 ## Dashboard
 ```
+source .venv/bin/activate
 python3 -m src.dashboard <board IP>
 ```
 
