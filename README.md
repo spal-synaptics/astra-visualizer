@@ -17,3 +17,6 @@ python3 -m src.dashboard <board IP>
 * `-i/--interval`: Polling interval in milliseconds (default: 500 ms)
 * `-w/--window`: Statistics sliding window length in seconds (default: 10 s)
 * `--port`: Port for running display dashboard webapp (default: 8050)
+
+> [!NOTE]  
+> To ensure successful SSH host-key verification, connect to **new** board IP's with `ssh root@<board IP>` before running dashboard.
