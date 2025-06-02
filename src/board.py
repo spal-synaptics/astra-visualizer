@@ -1,9 +1,11 @@
 import os
 import subprocess
+import shlex
 import tempfile
+from abc import ABC, abstractmethod
 
 
-class SSHCommandError(BaseException):
+class RemoteCommandError(BaseException):
 
     def __init__(self, cmd: str, output: str):
         self.cmd = cmd
@@ -11,59 +13,86 @@ class SSHCommandError(BaseException):
         super().__init__(f"Error running command \"{cmd}\":\n\t{output}")
 
 
-class RemoteCommandRunner:
+class BaseCommandRunner(ABC):
 
-    def __init__(self, board_ip: str, timeout: int = 5):
-        self.board_ip = board_ip
+    @abstractmethod
+    def run_cmd(self, cmd: str | list[str]) -> str | None:
+        ...
+
+    @abstractmethod
+    def copy(self, src: str, dst: str, recursive: bool = False, board_dst: bool = False) -> None:
+        ...
+
+
+class ADBCommandRunner(BaseCommandRunner):
+
+    def __init__(self, device_id: str | None = None, timeout: int = 5):
+        super().__init__()
+        self.device_id = device_id
         self.timeout = int(timeout)
 
-    def ssh_cmd(self, cmd: str | list[str]) -> str | None:
-        if isinstance(cmd, str):
-            cmd = cmd.split()
-        try:
-            result = subprocess.check_output(
-                [
-                    "ssh", "-T",
-                    "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={self.timeout}",
-                    f"root@{self.board_ip}"
-                ] + cmd,
-                text=True,
-                stderr=subprocess.STDOUT
-            )
-            print(f"Successfully executed command \"{' '.join(cmd)}\" on root@{self.board_ip}")
-            return result
-        except subprocess.CalledProcessError as e:
-            raise SSHCommandError(' '.join(e.cmd), e.stdout) from e
-        
-    def scp_cmd(self, src: str, dst: str, recursive: bool = False, board_dst: bool = False) -> None:
-        cmd = ["scp"]
-        if recursive:
-            cmd.append("-r")
+    def _build_adb_cmd(self) -> list[str]:
+        cmd = ["adb"]
+        if self.device_id:
+            cmd += ["-s", self.device_id]
+        return cmd
+
+    def run_cmd(self, cmd: str | list[str]) -> str | None:
+        if isinstance(cmd, list):
+            cmd = " ".join(shlex.quote(arg) for arg in cmd)
+
+        if any(op in cmd for op in ['|', ';', '||', '`', '$(', '<', '>']):
+            raise RemoteCommandError(cmd, "Unsupported shell syntax in ADB runner.")
+
+        parts = [part.strip() for part in cmd.split("&&")]
+        results = []
+
+        for part in parts:
+            full_cmd = self._build_adb_cmd() + ["exec-out"] + shlex.split(part)
+            try:
+                result = subprocess.check_output(
+                    full_cmd,
+                    timeout=self.timeout,
+                    text=True,
+                    stderr=subprocess.STDOUT
+                )
+                results.append(result)
+            except subprocess.CalledProcessError as e:
+                raise RemoteCommandError(' '.join(e.cmd), e.output) from e
+            except subprocess.TimeoutExpired:
+                raise RemoteCommandError(part, f"Command timed out after {self.timeout} seconds")
+
+        return "\n".join(results)
+
+    def copy(self, src: str, dst: str, recursive: bool = False, board_dst: bool = False) -> None:
+        base_cmd = self._build_adb_cmd()
         if board_dst:
-            dst = f"root@{self.board_ip}:{dst}"
+            cmd = base_cmd + ["push"]
+            cmd += ["-r"] if recursive else []
+            cmd += [src, dst]
         else:
-            src = f"root@{self.board_ip}:{src}"
-        cmd.extend([
-            "-o", "BatchMode=yes",
-            "-o", f"ConnectTimeout={self.timeout}",
-            src,
-            dst
-        ])
+            cmd = base_cmd + ["pull"]
+            cmd += ["-a"]  # preserve timestamps if needed
+            cmd += [src, dst]
+
         try:
             subprocess.check_output(
                 cmd,
-                text=True,
-                stderr=subprocess.STDOUT
+                timeout=self.timeout,
+                stderr=subprocess.STDOUT,
+                text=True
             )
-            print(f"Copied {src} to {dst}")
         except subprocess.CalledProcessError as e:
-            raise SSHCommandError(' '.join(e.cmd), e.stdout) from e
+            raise RemoteCommandError(' '.join(e.cmd), e.output) from e
+        except subprocess.TimeoutExpired:
+            raise RemoteCommandError(' '.join(cmd), f"Copy command timed out after {self.timeout} seconds")
 
 
-class LowLatencyRemoteCommandRunner:
+class SSHCommandRunner(BaseCommandRunner):
 
     def __init__(self, board_ip: str, timeout: int = 5, keep_alive: int = 10):
+        super().__init__()
+
         self.board_ip = board_ip
         self.timeout = int(timeout)
         self.keep_alive = int(keep_alive)
@@ -86,7 +115,7 @@ class LowLatencyRemoteCommandRunner:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL)
 
-    def ssh_cmd(self, cmd: str | list[str]) -> str | None:
+    def run_cmd(self, cmd: str | list[str]) -> str | None:
         if isinstance(cmd, str):
             cmd = cmd.split()
         try:
@@ -102,9 +131,9 @@ class LowLatencyRemoteCommandRunner:
             )
             return result
         except subprocess.CalledProcessError as e:
-            raise SSHCommandError(' '.join(e.cmd), e.stdout) from e
+            raise RemoteCommandError(' '.join(e.cmd), e.stdout) from e
         
-    def scp_cmd(self, src: str, dst: str, recursive: bool = False, board_dst: bool = False) -> None:
+    def copy(self, src: str, dst: str, recursive: bool = False, board_dst: bool = False) -> None:
         cmd = ["scp"]
         if recursive:
             cmd.append("-r")
@@ -125,7 +154,7 @@ class LowLatencyRemoteCommandRunner:
                 stderr=subprocess.STDOUT
             )
         except subprocess.CalledProcessError as e:
-            raise SSHCommandError(' '.join(e.cmd), e.stdout) from e
+            raise RemoteCommandError(' '.join(e.cmd), e.stdout) from e
 
 
 if __name__ == "__main__":
