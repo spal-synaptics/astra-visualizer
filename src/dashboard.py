@@ -7,12 +7,13 @@ from dash import Dash, dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objs as go
 
-from .board import LowLatencyRemoteCommandRunner
+from .remote import remote_command_runner_factory, RemoteCommandError
 
 
 class SystemProfiler:
+    
     def __init__(self, board_address, history_length=100, interval_ms=500):
-        self.cmd_runner = LowLatencyRemoteCommandRunner(board_address)
+        self.cmd_runner = remote_command_runner_factory(board_address)
         self.history_length = history_length
         self.interval_s = interval_ms / 1000
 
@@ -50,7 +51,10 @@ class SystemProfiler:
     def _start_polling_thread(self):
         def poll_loop():
             while True:
-                raw_stats: str = self.cmd_runner.ssh_cmd("cat /proc/stat && cat /sys/class/misc/synap/statistics/inference_time")
+                try:
+                    raw_stats: str = self.cmd_runner.run_cmd("cat /proc/stat && cat /sys/class/misc/synap/statistics/inference_time")
+                except RemoteCommandError as e:
+                    raise RuntimeError(f"Failed to fetch system stats: {e}\n\nPress Ctrl + C to exit") from e
                 curr_stats = self.parse_stats(raw_stats)
                 curr_ts = time.time()
 
@@ -89,9 +93,10 @@ class SystemProfiler:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "board_address", 
+        "-b", "--board-address", 
         type=str, 
-        help="Board IP address"
+        default=None,
+        help="ADB device ID (wired USB connection) or SSH address (wireless connection) (default: None, uses first detected ADB device)"
     )
     parser.add_argument(
         "-i", "--interval", 

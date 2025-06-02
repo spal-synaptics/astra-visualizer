@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import shlex
 import tempfile
@@ -26,15 +27,14 @@ class BaseCommandRunner(ABC):
 
 class ADBCommandRunner(BaseCommandRunner):
 
-    def __init__(self, device_id: str | None = None, timeout: int = 5):
+    def __init__(self, device_id: str, timeout: int = 5):
         super().__init__()
         self.device_id = device_id
         self.timeout = int(timeout)
 
     def _build_adb_cmd(self) -> list[str]:
         cmd = ["adb"]
-        if self.device_id:
-            cmd += ["-s", self.device_id]
+        cmd += ["-s", self.device_id]
         return cmd
 
     def run_cmd(self, cmd: str | list[str]) -> str | None:
@@ -155,6 +155,33 @@ class SSHCommandRunner(BaseCommandRunner):
             )
         except subprocess.CalledProcessError as e:
             raise RemoteCommandError(' '.join(e.cmd), e.stdout) from e
+
+
+def remote_command_runner_factory(
+    board_address: str | None = None,
+    timeout: int = 5
+) -> BaseCommandRunner:
+    if board_address is None:
+        return ADBCommandRunner(device_id="SL16x0", timeout=timeout)
+    
+    ADB_ID_PATTERN = re.compile(r"^SL16x\d+$")
+    IPV4_PATTERN = re.compile(
+        r"^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}"
+        r"(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$"
+    )
+
+    def _is_adb_device_id() -> bool:
+        return bool(ADB_ID_PATTERN.fullmatch(board_address))
+
+    def _is_ipv4_address() -> bool:
+        return bool(IPV4_PATTERN.fullmatch(board_address))
+    
+    if _is_adb_device_id():
+        return ADBCommandRunner(device_id=board_address, timeout=timeout)
+    elif _is_ipv4_address():
+        return SSHCommandRunner(board_ip=board_address, timeout=timeout)
+    else:
+        raise ValueError(f"Invalid board address format: expected ADB device ID or IPv4 address, got '{board_address}'")
 
 
 if __name__ == "__main__":
