@@ -32,11 +32,6 @@ class ADBCommandRunner(BaseCommandRunner):
         self.device_id = device_id
         self.timeout = int(timeout)
 
-    def _build_adb_cmd(self) -> list[str]:
-        cmd = ["adb"]
-        cmd += ["-s", self.device_id]
-        return cmd
-
     def run_cmd(self, cmd: str) -> str | None:
         try:
             result = subprocess.check_output(
