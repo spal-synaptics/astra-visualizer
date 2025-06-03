@@ -29,12 +29,13 @@ class SystemProfiler:
     @staticmethod
     def parse_stats(raw: str) -> dict[str, list[int]]:
         stats = {}
-        raw_data = raw.strip().splitlines()
-        for line in raw_data:
-            if line.startswith("cpu"):
-                parts = line.split()
-                stats[parts[0]] = list(map(int, parts[1:]))
-        stats["infer_time_us"] = int(raw_data[-1])
+        raw_data = [line for line in raw.splitlines() if line.strip()]
+        cpu_stats = raw_data[:5]  # first 5 lines for CPU stats
+        stats.update({
+            parts[0]: list(map(int, parts[1:]))
+            for parts in (line.strip().split() for line in cpu_stats)
+        })
+        stats["infer_time_us"] = int(raw_data[-1].strip())
         return stats
 
     @staticmethod
@@ -52,7 +53,7 @@ class SystemProfiler:
         def poll_loop():
             while True:
                 try:
-                    raw_stats: str = self.cmd_runner.run_cmd("cat /proc/stat && cat /sys/class/misc/synap/statistics/inference_time")
+                    raw_stats: str = self.cmd_runner.run_cmd("head -n 5 /proc/stat && cat /sys/class/misc/synap/statistics/inference_time")
                 except RemoteCommandError as e:
                     raise RuntimeError(f"Failed to fetch system stats: {e}\n\nPress Ctrl + C to exit") from e
                 curr_stats = self.parse_stats(raw_stats)
